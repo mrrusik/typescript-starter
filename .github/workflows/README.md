@@ -1,23 +1,50 @@
-# NestJS CI/CD Pipeline
+# NestJS CI/CD Pipeline with GitHub Actions
 
-## Overview
-This pipeline automates the build and deployment of the NestJS application using GitHub Actions. It deploys the application to an AWS EC2 instance and includes basic health checks.
+This repository uses GitHub Actions to automate the CI/CD pipeline for a NestJS application. The workflows cover:
 
-## Setup Instructions
+1. **Continuous Integration (CI)**: Builds, tests, and pushes a Docker image to Amazon ECR when a pull request is made to the `main` branch.
+2. **Continuous Deployment (CD)**: Deploys the Docker image from Amazon ECR to an EC2 instance managed by an Auto Scaling Group (ASG) with rolling updates, triggered when changes are merged into the `main` branch.
 
-1. **Fork and Clone the Repository**.
-   - Clone the repository to your GitHub account.
+## Workflow Overview
 
-2. **Configure AWS Secrets in GitHub**:
-   - Add `AWS_ACCESS_KEY_ID`, `AWS_SECRET_ACCESS_KEY`, and `AWS_REGION` in the repository secrets.
+### CI Workflow (`ci.yml`)
 
-3. **Deploy to AWS EC2**:
-   - Set up an EC2 instance and allow traffic on the port used by the NestJS application (default: 3000).
-   - Update `<EC2_PUBLIC_IP>` in the workflow file with your instance’s IP address.
+This workflow runs on pull requests to the `main` branch and includes:
 
-4. **Run the Pipeline**:
-   - Push changes to the main branch to trigger the CI/CD pipeline.
-   - The pipeline builds, deploys, and verifies the application.
+- **Build and Test**: Installs dependencies, runs tests, and builds a Docker image of the application.
+- **Push to Amazon ECR**: Tags the Docker image based on the branch and commit SHA, then pushes it to an ECR repository. If the branch is `main`, the image is also tagged as `latest`.
 
-## Monitoring
-Basic response checks are set up using `curl` in the GitHub Actions workflow. Alternatively, you can set up third-party tools or AWS CloudWatch for monitoring.
+### Deployment Workflow (`deploy.yml`)
+
+This workflow runs on pushes to the `main` branch and includes:
+
+- **Update ASG Launch Template**: Updates the ASG's launch template with the latest Docker image tag from ECR.
+- **Rolling Update**: Triggers an ASG instance refresh to perform a rolling deployment of EC2 instances with the new launch template version.
+
+## Prerequisites
+
+1. **Amazon Web Services (AWS) Account** with the following resources:
+   - **Amazon ECR Repository**: For storing Docker images of the application.
+   - **Auto Scaling Group (ASG)**: For deploying the application to EC2 instances.
+   - **Launch Template**: Configured to pull and run the Docker image from ECR.
+
+2. **GitHub Repository Secrets**: Set the following secrets in your GitHub repository settings:
+   - `AWS_ACCOUNT_ID`: Your AWS account ID.
+   - `AWS_REGION`: AWS region (e.g., `us-east-1`).
+   - `ECR_REPOSITORY`: Name of the ECR repository.
+   - `LAUNCH_TEMPLATE_ID`: ID of the launch template associated with the ASG.
+   - `ASG_NAME`: Name of the Auto Scaling Group.
+   - IAM Role for GitHub Actions with permissions for ECR and ASG management.
+
+3. **IAM Role for OIDC Integration**: Set up an IAM role with OIDC integration for GitHub Actions. This role must have permissions to access ECR and update ASG configurations.
+
+## CI Workflow Configuration (`ci.yml`)
+
+The CI workflow is defined in `.github/workflows/ci.yml` and includes the following steps:
+
+1. **Checkout Code**: Retrieves the latest code from the pull request.
+2. **Install Dependencies**: Installs the necessary packages.
+3. **Run Tests**: Executes tests to validate the application.
+4. **Configure AWS Credentials**: Uses OIDC to authenticate with AWS and access ECR.
+5. **Build and Push Docker Image**: Builds the Docker image, tags it with the branch and commit SHA, and pushes it to ECR. If the branch is `main`, it also updates the `latest` tag.
+
