@@ -1,0 +1,52 @@
+name: Deployment Pipeline with ASG Rolling Update
+
+on:
+  push:
+    branches:
+      - main
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Configure AWS credentials from OIDC
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: arn:aws:iam::${{ secrets.AWS_ACCOUNT_ID }}:role/cicd
+          aws-region: ${{ secrets.AWS_REGION }}
+
+      - name: Update ASGLaunch Template with new Docker image
+        env:
+          AWS_REGION: ${{ secrets.AWS_REGION }}
+          AWS_ACCOUNT_ID: ${{ secrets.AWS_ACCOUNT_ID }}
+          ECR_REPOSITORY: ${{ secrets.ECR_REPOSITORY }}
+          LAUNCH_TEMPLATE_ID: ${{ secrets.LAUNCH_TEMPLATE_ID }}
+        run: |
+          NEW_IMAGE_URI="$AWS_ACCOUNT_ID.dkr.ecr.$AWS_REGION.amazonaws.com/$ECR_REPOSITORY:latest"
+          aws ec2 create-launch-template-version \
+            --launch-template-id $LAUNCH_TEMPLATE_ID \
+            --version-description "New version with updated Docker image" \
+            --launch-template-data "{\"ImageId\":\"ami-0f29c8402f8cce65c\",\"UserData\":\"$(echo -n '#!/bin/bash\naws ecr get-login-password --region $AWS_REGION | docker login --username AWS --password-stdin $NEW_IMAGE_URI\ndocker pull $NEW_IMAGE_URI\ndocker run -d --name nestjs-app -p 3000:3000 $NEW_IMAGE_URI' | base64)\"}" \
+            --region $AWS_REGION
+
+          # Set the newly created launch template version as the default for the ASG
+          NEW_VERSION=$(aws ec2 describe-launch-template-versions \
+            --launch-template-id $LAUNCH_TEMPLATE_ID \
+            --query "LaunchTemplateVersions[-1].VersionNumber" \
+            --output text)
+          aws autoscaling update-auto-scaling-group \
+            --auto-scaling-group-name ${{ secrets.ASG_NAME }} \
+            --launch-template "LaunchTemplateId=$LAUNCH_TEMPLATE_ID,Version=$NEW_VERSION"
+
+      # Step 2: Trigger ASG Instance Refresh for Rolling Update
+      - name: Trigger ASG Instance Refresh
+        env:
+          ASG_NAME: ${{ secrets.ASG_NAME }}
+        run: |
+          aws autoscaling start-instance-refresh \
+            --auto-scaling-group-name $ASG_NAME \
+            --preferences '{"MinHealthyPercentage": 50, "InstanceWarmup": 300}'
